@@ -2159,8 +2159,14 @@ class TSDemuxer extends BaseDemuxer {
             + (data[pos + 3] & 0xFF) * 128 // 1 << 7
             + (data[pos + 4] & 0xFE) / 2
             + this.timestamp_offset_;
+        // Unwrap relative to the PCR in both directions: a PTS/DTS can wrap before the PCR
+        // does (ahead of it), or still be pre-wrap after the PCR wrapped and
+        // timestamp_offset_ advanced (behind it, e.g. audio muxed late). The latter used to
+        // be counted 2^33 ahead, a ~26.5h jump.
         if (timestamp + 0x100000000 < this.last_pcr_base_) {
             timestamp += 0x200000000; // pts/dts wraparound
+        } else if (timestamp - 0x100000000 > this.last_pcr_base_) {
+            timestamp -= 0x200000000; // pts/dts not yet wrapped, pcr already has
         }
         return timestamp;
     }
