@@ -142,6 +142,10 @@ class TSDemuxer extends BaseDemuxer {
     };
 
     private last_pcr_: number | undefined;
+    // Clock jumps beyond these (in 90kHz ticks, relative to the last PCR) are treated as
+    // discontinuities. Forward is generous so a long provider outage isn't mistaken for one.
+    private static readonly DISCONTINUITY_FORWARD = 60 * 90000;
+    private static readonly DISCONTINUITY_BACKWARD = 10 * 90000;
     private last_pcr_base_: number = NaN;
     private timestamp_offset_: number = 0;
 
@@ -2147,9 +2151,36 @@ class TSDemuxer extends BaseDemuxer {
         if (pcr_base + 0x100000000 < this.last_pcr_base_) {
             pcr_base += 0x200000000; // pcr_base wraparound
             this.timestamp_offset_ += 0x200000000;
+        } else if (pcr_base - 0x100000000 > this.last_pcr_base_) {
+            // Only reachable after a rebase below moved the offset past a pre-wrap clock.
+            pcr_base -= 0x200000000;
+            this.timestamp_offset_ -= 0x200000000;
         }
+        pcr_base = this.rebaseOnDiscontinuity(pcr_base);
         this.last_pcr_base_ = pcr_base;
         return pcr_base;
+    }
+
+    /**
+     * An encoder restart (e.g. a provider switching an event channel between its feed and a
+     * slate) restarts the clock: PCR/PTS jump far outside the normal skew between them. A
+     * clock restarting just below zero reads as ~26.5h ahead, so the remuxer tries to fill
+     * the gap with silence (and overflows the stack); one restarting above zero reads as
+     * minutes behind, so everything after it is dropped as late. Rebase the offset so the
+     * new clock continues from the last PCR instead. Called after wraparound unwrapping, so
+     * |delta| <= 2^32 and a jump here can't be a wrap.
+     */
+    private rebaseOnDiscontinuity(timestamp: number): number {
+        if (!Number.isFinite(this.last_pcr_base_)) {
+            return timestamp;
+        }
+        let delta = timestamp - this.last_pcr_base_;
+        if (delta <= TSDemuxer.DISCONTINUITY_FORWARD && delta >= -TSDemuxer.DISCONTINUITY_BACKWARD) {
+            return timestamp;
+        }
+        Log.w(this.TAG, `Timestamp discontinuity of ${Math.round(delta / 90)} ms, rebasing timeline`);
+        this.timestamp_offset_ -= delta;
+        return timestamp - delta;
     }
 
     private getTimestamp(data: Uint8Array, pos: number): number {
@@ -2168,7 +2199,8 @@ class TSDemuxer extends BaseDemuxer {
         } else if (timestamp - 0x100000000 > this.last_pcr_base_) {
             timestamp -= 0x200000000; // pts/dts not yet wrapped, pcr already has
         }
-        return timestamp;
+        // A PES from a restarted clock can arrive before the PCR announcing it.
+        return this.rebaseOnDiscontinuity(timestamp);
     }
 
 }

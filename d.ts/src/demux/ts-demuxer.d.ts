@@ -18,6 +18,8 @@ declare class TSDemuxer extends BaseDemuxer {
     private video_metadata_;
     private audio_metadata_;
     private last_pcr_;
+    private static readonly DISCONTINUITY_FORWARD;
+    private static readonly DISCONTINUITY_BACKWARD;
     private last_pcr_base_;
     private timestamp_offset_;
     private audio_last_sample_pts_;
@@ -92,6 +94,16 @@ declare class TSDemuxer extends BaseDemuxer {
     private parseSEIPayload;
     private getNearestTimestampMilliseconds;
     private getPcrBase;
+    /**
+     * An encoder restart (e.g. a provider switching an event channel between its feed and a
+     * slate) restarts the clock: PCR/PTS jump far outside the normal skew between them. A
+     * clock restarting just below zero reads as ~26.5h ahead, so the remuxer tries to fill
+     * the gap with silence (and overflows the stack); one restarting above zero reads as
+     * minutes behind, so everything after it is dropped as late. Rebase the offset so the
+     * new clock continues from the last PCR instead. Called after wraparound unwrapping, so
+     * |delta| <= 2^32 and a jump here can't be a wrap.
+     */
+    private rebaseOnDiscontinuity;
     private getTimestamp;
 }
 export default TSDemuxer;
