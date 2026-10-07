@@ -174,13 +174,14 @@ class FetchStreamLoader extends BaseLoader {
     abort() {
         this._requestAbort = true;
 
-        if (this._status !== LoaderStatus.kBuffering || !Browser.chrome) {
-            // Chrome may throw Exception-like things here, avoid using if is buffering
-            if (this._abortController) {
-                try {
-                    this._abortController.abort();
-                } catch (e) {}
-            }
+        // Always abort the request. Skipping it while buffering on Chrome left cancellation
+        // to the next chunk, so a stalled live stream (no next chunk) kept its connection
+        // open forever. The resulting AbortError is swallowed by the signal.aborted checks
+        // in open() and _pump().
+        if (this._abortController) {
+            try {
+                this._abortController.abort();
+            } catch (e) {}
         }
     }
 
