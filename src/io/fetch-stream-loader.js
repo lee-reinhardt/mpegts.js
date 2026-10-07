@@ -57,9 +57,10 @@ class FetchStreamLoader extends BaseLoader {
     }
 
     destroy() {
-        if (this.isWorking()) {
-            this.abort();
-        }
+        // Abort regardless of status: after a pump error (kError) the response is no longer
+        // read but still open, and on HTTP/2 its unread bytes hold the connection's shared
+        // flow-control window, starving every other stream on it.
+        this.abort();
         super.destroy();
     }
 
@@ -241,6 +242,13 @@ class FetchStreamLoader extends BaseLoader {
             }
 
             this._status = LoaderStatus.kError;
+            // The pump stops here, so release the request now rather than leaving it open
+            // and unread until (or unless) the owner destroys this loader.
+            if (this._abortController) {
+                try {
+                    this._abortController.abort();
+                } catch (e) {}
+            }
             let type = 0;
             let info = null;
 
